@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>順利紀律部隊宿舍 - 巴士即時到站看板</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"Segoe UI"', 'Roboto', 'sans-serif'],
+                        mono: ['"SF Mono"', 'ui-monospace', 'monospace']
+                    },
+                    colors: {
+                        darkBg: '#0a0a0c',
+                        cardBg: '#16161a',
+                        cardBorder: '#26262e',
+                        route26: '#ff9f0a',
+                        route27: '#30d158',
+                        route29M: '#0a84ff',
+                        route42: '#bf5af2',
+                        route23: '#ff375f',
+                        urgentRed: '#ff453a'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Glowing pulse animation for connection status */
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.92); }
+        }
+        .animate-pulse-glow {
+            animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        /* Glassmorphic effect */
+        .glass-panel {
+            background: rgba(22, 22, 26, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        /* Prevent selecting text on touch screens */
+        body {
+            user-select: none;
+            -webkit-user-select: none;
+        }
+    </style>
+</head>
+<body class="bg-darkBg text-gray-100 min-h-screen flex flex-col justify-between p-4 sm:p-6 lg:p-8 antialiased">
+
+    <!-- Header Section -->
+    <header class="max-w-4xl mx-auto w-full flex flex-col sm:flex-row justify-between items-center pb-6 mb-6 border-b border-gray-800/80 gap-4">
+        <div class="flex items-center space-x-3">
+            <span class="text-3xl sm:text-4xl">🚏</span>
+            <div>
+                <h1 class="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-white">
+                    順利紀律部隊宿舍
+                </h1>
+                <p class="text-xs sm:text-sm text-gray-400 font-medium">往 九龍 / 旺角 / 尖沙咀 方向</p>
+            </div>
+        </div>
+
+        <!-- Live Refresh & Clock Indicator -->
+        <div class="flex items-center gap-4 bg-cardBg border border-cardBorder px-4 py-2.5 rounded-2xl shadow-lg">
+            <div class="flex items-center gap-2">
+                <span id="statusDot" class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse-glow"></span>
+                <span id="updateTime" class="text-xs sm:text-sm font-mono text-gray-300 font-semibold">載入中...</span>
+            </div>
+            <button onclick="fetchBusData()" title="手動更新" class="text-gray-400 hover:text-white transition active:scale-95 p-1">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Board Grid -->
+    <main class="max-w-4xl mx-auto w-full flex-1">
+        <div id="busGrid" class="grid grid-cols-1 gap-4 sm:gap-5">
+            <!-- Loading placeholder -->
+            <div class="text-center py-20 text-gray-500">
+                <svg class="animate-spin h-8 w-8 mx-auto mb-3 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p class="text-lg font-medium">連線至九巴即時 API 中...</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="max-w-4xl mx-auto w-full mt-8 pt-4 border-t border-gray-900 flex justify-between items-center text-xs text-gray-500">
+        <div>數據來源：香港政府 Data.gov.hk / 九巴 Open API</div>
+        <div id="countdownTimer" class="font-mono">下次更新：30s</div>
+    </footer>
+
+    <!-- Logic Script -->
+    <script>
+        const STOP_ID = "30B726B18D6F2553";
+        const TARGET_ROUTES = ["26", "27", "29M", "42", "23"];
+
+        // Color maps & route names fallback
+        const ROUTE_CONFIG = {
+            "26":  { color: "#ff9f0a", tailwindBorder: "border-l-[#ff9f0a]", defaultDest: "尖沙咀東" },
+            "27":  { color: "#30d158", tailwindBorder: "border-l-[#30d158]", defaultDest: "旺角" },
+            "29M": { color: "#0a84ff", tailwindBorder: "border-l-[#0a84ff]", defaultDest: "新蒲崗" },
+            "42":  { color: "#bf5af2", tailwindBorder: "border-l-[#bf5af2]", defaultDest: "葵青長康" },
+            "23":  { color: "#ff375f", tailwindBorder: "border-l-[#ff375f]", defaultDest: "觀塘碼頭" }
+        };
+
+        let nextRefreshSeconds = 30;
+        let timerInterval = null;
+
+        // Fetch ETA Data from API
+        async function fetchBusData() {
+            const url = `https://data.etabus.gov.hk/v1/transport/kmb/stop-eta/${STOP_ID}`;
+            const statusDot = document.getElementById('statusDot');
+
+            try {
+                // UI feedback
+                statusDot.className = "w-3 h-3 rounded-full bg-amber-400 animate-pulse";
+
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("網路連線失敗");
+                
+                const json = await response.json();
+                const rawData = json.data || [];
+
+                // Parse & group ETAs by route
+                const routeEtas = {};
+                TARGET_ROUTES.forEach(r => routeEtas[r] = []);
+
+                const now = new Date();
+
+                rawData.forEach(item => {
+                    if (TARGET_ROUTES.includes(item.route) && item.eta) {
+                        const etaTime = new Date(item.eta);
+                        const diffMins = Math.round((etaTime - now) / 60000);
+
+                        routeEtas[item.route].push({
+                            dest: item.dest_tc,
+                            mins: diffMins,
+                            timeStr: etaTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+                            remark: item.rmk_tc || ""
+                        });
+                    }
+                });
+
+                // Sort ETAs chronologically
+                TARGET_ROUTES.forEach(r => {
+                    routeEtas[r].sort((a, b) => a.mins - b.mins);
+                });
+
+                renderUI(routeEtas);
+
+                // Update timestamps & status
+                const nowTimeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+                document.getElementById('updateTime').innerText = `最後更新 ${nowTimeStr}`;
+                statusDot.className = "w-3 h-3 rounded-full bg-emerald-500 animate-pulse-glow";
+
+                // Reset timer
+                nextRefreshSeconds = 30;
+
+            } catch (error) {
+                console.error("API Error:", error);
+                statusDot.className = "w-3 h-3 rounded-full bg-red-500";
+                document.getElementById('updateTime').innerText = `更新失敗`;
+            }
+        }
+
+        // Render Dashboard HTML
+        function renderUI(routeEtas) {
+            const grid = document.getElementById('busGrid');
+            grid.innerHTML = "";
+
+            TARGET_ROUTES.forEach(route => {
+                const config = ROUTE_CONFIG[route];
+                const etas = routeEtas[route];
+
+                // Determine destination
+                const destText = etas.length > 0 ? `往 ${etas[0].dest}` : `往 ${config.defaultDest}`;
+
+                // Construct ETA Badges HTML
+                let etaHtml = "";
+
+                if (etas.length === 0) {
+                    etaHtml = `<div class="text-gray-500 font-semibold text-lg sm:text-xl">暫無班次</div>`;
+                } else {
+                    // Show next 2 buses
+                    const nextBuses = etas.slice(0, 2);
+
+                    etaHtml = `<div class="flex items-center gap-4 sm:gap-6">`;
+
+                    nextBuses.forEach((bus, index) => {
+                        const isPrimary = index === 0;
+                        const isUrgent = bus.mins <= 3 && bus.mins >= 0;
+
+                        // Display format
+                        let minsDisplay = "";
+                        if (bus.mins <= 0) {
+                            minsDisplay = "即將到達";
+                        } else {
+                            minsDisplay = `${bus.mins} <span class="text-sm sm:text-base font-normal text-gray-400">分鐘</span>`;
+                        }
+
+                        // Colors
+                        let textColorClass = "text-emerald-400";
+                        if (isUrgent) {
+                            textColorClass = "text-urgentRed font-extrabold animate-pulse";
+                        } else if (!isPrimary) {
+                            textColorClass = "text-gray-300";
+                        }
+
+                        etaHtml += `
+                            <div class="text-right ${isPrimary ? '' : 'hidden sm:block border-l border-gray-800 pl-4 sm:pl-6'}">
+                                <div class="${isPrimary ? 'text-3xl sm:text-4xl lg:text-5xl' : 'text-xl sm:text-2xl'} font-extrabold tracking-tight ${textColorClass}">
+                                    ${minsDisplay}
+                                </div>
+                                <div class="text-xs sm:text-sm text-gray-400 font-mono mt-0.5">
+                                    ${bus.timeStr} ${bus.remark ? `<span class="text-gray-500">(${bus.remark})</span>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    etaHtml += `</div>`;
+                }
+
+                // Card Element
+                const card = document.createElement('div');
+                card.className = `glass-panel rounded-2xl p-5 sm:p-6 border border-cardBorder border-l-[8px] ${config.tailwindBorder} flex justify-between items-center shadow-2xl transition hover:border-gray-700`;
+
+                card.innerHTML = `
+                    <div class="flex items-center gap-4 sm:gap-6">
+                        <div class="text-4xl sm:text-5xl font-black tracking-tight" style="color: ${config.color}">
+                            ${route}
+                        </div>
+                        <div>
+                            <div class="text-base sm:text-lg font-bold text-gray-200">${destNameFormatted(destText)}</div>
+                            <div class="text-xs sm:text-sm text-gray-500 font-medium">九巴 KMB</div>
+                        </div>
+                    </div>
+                    <div>
+                        ${etaHtml}
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+        }
+
+        function destNameFormatted(dest) {
+            // Shorten long destination names if needed
+            return dest;
+        }
+
+        // Countdown timer loop
+        function startCountdown() {
+            if (timerInterval) clearInterval(timerInterval);
+
+            timerInterval = setInterval(() => {
+                nextRefreshSeconds--;
+                if (nextRefreshSeconds <= 0) {
+                    fetchBusData();
+                } else {
+                    document.getElementById('countdownTimer').innerText = `下次更新：${nextRefreshSeconds}s`;
+                }
+            }, 1000);
+        }
+
+        // Initial setup
+        window.onload = () => {
+            fetchBusData();
+            startCountdown();
+        };
+    </script>
+</body>
+</html>
